@@ -1,0 +1,30 @@
+# TNM staging training config
+seed: 0
+data:
+  data_dir: data
+  max_length: 512
+  batch_size: 16
+  eval_batch_size: 32
+
+model:
+  encoder_name: "emilyalsentzer/Bio_ClinicalBERT"
+  t_num_labels: 4   # T1-T4
+  n_num_labels: 4   # N0-N3
+  m_num_labels: 2   # M0-M1
+
+training:
+  num_epochs: 5
+  learning_rate: 5.0e-5
+  weight_decay: 0.01
+  warmup_ratio: 0.1
+  eval_steps: 100
+  save_steps: 200
+  save_total_limit: 2
+  metric_for_best: exact_match  # or eval_f1_macro
+  greater_is_better: true
+  # Class weights for M (imbalanced): computed in code from train set
+  use_class_weights_m: true
+
+output:
+  output_dir: outputs
+  run_name: tnm_biobert

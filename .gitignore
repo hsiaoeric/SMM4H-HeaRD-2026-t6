@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# Virtual environments
+.venv/
+
+# IDE
+.vscode/
+.idea/
+
+# Data files (large, not tracked)
+TCGA_Reports.csv
+TCGA_Metadata/
+data/
+
+# Model outputs (large checkpoints)
+outputs/
+outputs_*/
+
+# Misc
+*.log
+.DS_Store
