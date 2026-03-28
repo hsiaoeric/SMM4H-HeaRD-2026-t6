@@ -11,6 +11,7 @@ import numpy as np
 import pandas as pd
 import torch
 from torch.utils.data import DataLoader
+from tqdm import tqdm
 from transformers import AutoTokenizer
 
 from constants import (
@@ -20,6 +21,7 @@ from constants import (
 )
 from dataset import TNMDataset
 from model import TNMClassifier
+from tnm_regex import encode_hints
 
 logger = logging.getLogger(__name__)
 
@@ -50,10 +52,12 @@ def main():
             train_config = json.load(f)
         encoder_name = train_config.get("encoder", DEFAULT_ENCODER)
         max_length = train_config.get("max_length", DEFAULT_MAX_LENGTH)
+        use_regex_hints = train_config.get("regex_hints", False)
     else:
         logger.warning("Config not found at %s, using defaults.", config_path)
         encoder_name = DEFAULT_ENCODER
         max_length = args.max_length
+        use_regex_hints = False
 
     df = pd.read_csv(args.input_csv)
     if "text" not in df.columns:
@@ -73,7 +77,14 @@ def main():
         return_tensors="np",
     )
     n = len(texts)
-    ds = TNMDataset(enc, np.zeros(n, dtype=int), np.zeros(n, dtype=int), np.zeros(n, dtype=int))
+    if use_regex_hints:
+        logger.info("Extracting regex hints...")
+        ht, hn, hm = encode_hints(texts)
+    else:
+        ht = hn = hm = None
+
+    ds = TNMDataset(enc, np.zeros(n, dtype=int), np.zeros(n, dtype=int), np.zeros(n, dtype=int),
+                    hint_t=ht, hint_n=hn, hint_m=hm)
     loader = DataLoader(ds, batch_size=args.batch_size, shuffle=False, num_workers=0)
 
     model = TNMClassifier(
@@ -81,6 +92,7 @@ def main():
         t_num_labels=T_NUM_LABELS,
         n_num_labels=N_NUM_LABELS,
         m_num_labels=M_NUM_LABELS,
+        use_regex_hints=use_regex_hints,
     )
     ckpt = torch.load(args.checkpoint, map_location=device)
     model.load_state_dict(ckpt["model_state_dict"])
@@ -89,16 +101,22 @@ def main():
 
     preds_t, preds_n, preds_m = [], [], []
     with torch.no_grad():
-        for batch in loader:
+        for batch in tqdm(loader, desc="Predicting", unit="batch"):
             input_ids = batch["input_ids"].to(device)
             attention_mask = batch["attention_mask"].to(device)
             token_type_ids = batch.get("token_type_ids")
             if token_type_ids is not None:
                 token_type_ids = token_type_ids.to(device)
+            hint_t = batch["hint_t"].to(device) if "hint_t" in batch else None
+            hint_n = batch["hint_n"].to(device) if "hint_n" in batch else None
+            hint_m = batch["hint_m"].to(device) if "hint_m" in batch else None
             logits_t, logits_n, logits_m = model(
                 input_ids=input_ids,
                 attention_mask=attention_mask,
                 token_type_ids=token_type_ids,
+                hint_t=hint_t,
+                hint_n=hint_n,
+                hint_m=hint_m,
             )
             preds_t.append(logits_t.argmax(1).cpu().numpy())
             preds_n.append(logits_n.argmax(1).cpu().numpy())
@@ -109,9 +127,12 @@ def main():
 
     out = pd.DataFrame({
         id_col: ids,
-        "T_label": [T_IDX_TO_LABEL[int(x)] for x in preds_t],
-        "N_label": [N_IDX_TO_LABEL[int(x)] for x in preds_n],
-        "M_label": [M_IDX_TO_LABEL[int(x)] for x in preds_m],
+        # "T_label": [T_IDX_TO_LABEL[int(x)] for x in preds_t],
+        # "N_label": [N_IDX_TO_LABEL[int(x)] for x in preds_n],
+        # "M_label": [M_IDX_TO_LABEL[int(x)] for x in preds_m],
+        "t": preds_t + 1,
+        "n": preds_n,
+        "m": preds_m,
     })
     out.to_csv(args.output_csv, index=False)
     logger.info("Wrote %d rows to %s", len(out), args.output_csv)

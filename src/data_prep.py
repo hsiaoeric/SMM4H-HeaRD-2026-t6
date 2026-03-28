@@ -78,10 +78,12 @@ def main():
     parser = argparse.ArgumentParser(description="Prepare TNM dataset: join, map labels, split.")
     parser.add_argument("--reports", default="TCGA_Reports.csv", help="Path to TCGA_Reports.csv")
     parser.add_argument("--meta-dir", default="TCGA_Metadata", help="Directory with T14/N03/M01 CSVs")
-    parser.add_argument("--out-dir", default="data", help="Output directory for train/val/test CSVs")
-    parser.add_argument("--test-size", type=float, default=0.15, help="Fraction for test set")
-    parser.add_argument("--val-size", type=float, default=0.15, help="Fraction of train for validation")
+    parser.add_argument("--out-dir", default="data", help="Output directory for train/val CSVs")
+    parser.add_argument("--val-size", type=float, default=0.20, help="Fraction for validation set")
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--partial-labels", action="store_true",
+                        help="Keep samples with partial TNM labels (left join). "
+                             "Missing labels stored as -1.")
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
@@ -120,55 +122,76 @@ def main():
     m_df["M"] = m_df["M"].astype(int)
     m_df = m_df[["case_submitter_id", "M"]].drop_duplicates(subset=["case_submitter_id"], keep="first")
 
-    # Join: reports -> T -> N -> M (inner joins so only rows with all three labels)
-    df = reports.merge(t_df, on="case_submitter_id", how="inner")
-    df = df.merge(n_df, on="case_submitter_id", how="inner")
-    df = df.merge(m_df, on="case_submitter_id", how="inner")
+    # Join: reports -> T -> N -> M
+    if args.partial_labels:
+        # Left joins: keep all reports that have at least one valid label
+        df = reports.merge(t_df, on="case_submitter_id", how="left")
+        df = df.merge(n_df, on="case_submitter_id", how="left")
+        df = df.merge(m_df, on="case_submitter_id", how="left")
+        # Drop rows with no labels at all
+        has_any = df["T"].notna() | df["N"].notna() | df["M"].notna()
+        df = df[has_any].copy()
+        # Fill missing labels with -1 sentinel
+        for col in ("T", "N", "M"):
+            df[col] = df[col].fillna(-1).astype(int)
+        logger.info("Partial-label dataset: %d rows (T=%d, N=%d, M=%d valid).",
+                     len(df),
+                     (df["T"] >= 0).sum(),
+                     (df["N"] >= 0).sum(),
+                     (df["M"] >= 0).sum())
+    else:
+        # Inner joins: only rows with all three labels (original behavior)
+        df = reports.merge(t_df, on="case_submitter_id", how="inner")
+        df = df.merge(n_df, on="case_submitter_id", how="inner")
+        df = df.merge(m_df, on="case_submitter_id", how="inner")
+        logger.info("Unified dataset: %d rows with all T, N, M labels.", len(df))
 
-    # Add string labels for submission
-    df["T_label"] = df["T"].map(T_IDX_TO_LABEL)
-    df["N_label"] = df["N"].map(N_IDX_TO_LABEL)
-    df["M_label"] = df["M"].map(M_IDX_TO_LABEL)
+    # Add string labels for submission (empty string for missing)
+    df["T_label"] = df["T"].map(T_IDX_TO_LABEL).fillna("")
+    df["N_label"] = df["N"].map(N_IDX_TO_LABEL).fillna("")
+    df["M_label"] = df["M"].map(M_IDX_TO_LABEL).fillna("")
 
-    logger.info("Unified dataset: %d rows with all T, N, M labels.", len(df))
+    # Stratified split — use T when available, fall back to N
+    # For partial-label mode, stratify on the label with most coverage
+    stratify_candidates = ["T", "N", "M"]
+    stratify_col = None
+    for col in stratify_candidates:
+        valid = df[col] >= 0
+        if valid.all() or valid.mean() > 0.8:
+            stratify_col = col
+            break
+    if stratify_col is None:
+        stratify_col = "T"
 
-    # Stratified split
-    stratify_col = "T"
     try:
-        train_val, test = train_test_split(
-            df, test_size=args.test_size, stratify=df[stratify_col], random_state=args.seed
+        stratify_vals = df[stratify_col].copy().clip(lower=0)
+        train, val = train_test_split(
+            df, test_size=args.val_size, stratify=stratify_vals, random_state=args.seed
         )
     except ValueError as e:
-        logger.warning("Stratification on T failed (%s), falling back to N.", e)
-        stratify_col = "N"
-        train_val, test = train_test_split(
-            df, test_size=args.test_size, stratify=df[stratify_col], random_state=args.seed
-        )
-    val_ratio = args.val_size / (1 - args.test_size)
-    try:
+        logger.warning("Stratification on %s failed (%s), falling back to random.", stratify_col, e)
         train, val = train_test_split(
-            train_val, test_size=val_ratio, stratify=train_val[stratify_col], random_state=args.seed
-        )
-    except ValueError as e:
-        logger.warning("Stratification on %s failed for val split (%s), falling back to N.", stratify_col, e)
-        train, val = train_test_split(
-            train_val, test_size=val_ratio, stratify=train_val["N"], random_state=args.seed
+            df, test_size=args.val_size, random_state=args.seed
         )
 
     # Save
     out_cols = ["patient_filename", "case_submitter_id", "text", "T", "N", "M", "T_label", "N_label", "M_label"]
     train[out_cols].to_csv(os.path.join(out_dir, "train.csv"), index=False)
     val[out_cols].to_csv(os.path.join(out_dir, "val.csv"), index=False)
-    test[out_cols].to_csv(os.path.join(out_dir, "test.csv"), index=False)
 
     # Sanity: label distributions
-    for name, part in [("train", train), ("val", val), ("test", test)]:
+    for name, part in [("train", train), ("val", val)]:
         logger.info("%s: n=%d", name, len(part))
-        logger.info("  T: %s", part["T"].value_counts().sort_index().to_dict())
-        logger.info("  N: %s", part["N"].value_counts().sort_index().to_dict())
-        logger.info("  M: %s", part["M"].value_counts().sort_index().to_dict())
+        for col in ("T", "N", "M"):
+            valid = part[part[col] >= 0][col]
+            missing = (part[col] < 0).sum()
+            dist = valid.value_counts().sort_index().to_dict()
+            if missing > 0:
+                logger.info("  %s: %s (missing=%d)", col, dist, missing)
+            else:
+                logger.info("  %s: %s", col, dist)
 
-    logger.info("Saved train/val/test to %s/", out_dir)
+    logger.info("Saved train/val to %s/", out_dir)
     return 0
 
 

@@ -17,5 +17,5 @@ N_NUM_LABELS = 4
 M_NUM_LABELS = 2
 
 # Default model
-DEFAULT_ENCODER = "emilyalsentzer/Bio_ClinicalBERT"
-DEFAULT_MAX_LENGTH = 512
+DEFAULT_ENCODER = "thomas-sounack/BioClinical-ModernBERT-base"
+DEFAULT_MAX_LENGTH = 8192
