@@ -10,12 +10,16 @@ dependencies = [
     "transformers>=4.30.0",
     "scikit-learn>=1.2.0",
     "tqdm>=4.60.0",
+    "wandb>=0.17.0",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0.0",
 ]
+
+[tool.uv]
+package = false
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -10,8 +10,9 @@ import sys
 import numpy as np
 import pandas as pd
 import torch
+import wandb
 import torch.nn as nn
-from sklearn.metrics import f1_score, roc_auc_score
+from sklearn.metrics import f1_score, precision_score, recall_score, roc_auc_score
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 from transformers import AutoTokenizer
@@ -31,7 +32,7 @@ def set_seed(seed: int):
         torch.cuda.manual_seed_all(seed)
 
 
-def masked_loss(criterion, logits, labels, msk):
+def masked_loss(criterion, logits, labels, mask):
     """Compute loss only on samples where the label is valid (mask=True).
 
     Returns 0.0 if no valid samples in the batch.
@@ -54,9 +55,41 @@ def compute_metrics(pred_t, pred_n, pred_m, true_t, true_n, true_m,
     if mask_m is None:
         mask_m = np.ones(len(true_m), dtype=bool)
 
-    f1_t = f1_score(true_t[mask_t], pred_t[mask_t], average="macro", zero_division=0) if mask_t.any() else 0.0
-    f1_n = f1_score(true_n[mask_n], pred_n[mask_n], average="macro", zero_division=0) if mask_n.any() else 0.0
-    f1_m = f1_score(true_m[mask_m], pred_m[mask_m], average="macro", zero_division=0) if mask_m.any() else 0.0
+    def _f1(y_true, y_pred, avg):
+        return float(f1_score(y_true, y_pred, average=avg, zero_division=0))
+
+    def _prec(y_true, y_pred, avg):
+        return float(precision_score(y_true, y_pred, average=avg, zero_division=0))
+
+    def _rec(y_true, y_pred, avg):
+        return float(recall_score(y_true, y_pred, average=avg, zero_division=0))
+
+    tt, pt = true_t[mask_t], pred_t[mask_t]
+    tn, pn = true_n[mask_n], pred_n[mask_n]
+    tm, pm = true_m[mask_m], pred_m[mask_m]
+
+    f1_t = _f1(tt, pt, "macro") if mask_t.any() else 0.0
+    f1_n = _f1(tn, pn, "macro") if mask_n.any() else 0.0
+    f1_m = _f1(tm, pm, "macro") if mask_m.any() else 0.0
+
+    # Per-head micro metrics
+    mi_f1_t  = _f1(tt, pt, "micro")   if mask_t.any() else 0.0
+    mi_pr_t  = _prec(tt, pt, "micro") if mask_t.any() else 0.0
+    mi_re_t  = _rec(tt, pt, "micro")  if mask_t.any() else 0.0
+    mi_f1_n  = _f1(tn, pn, "micro")   if mask_n.any() else 0.0
+    mi_pr_n  = _prec(tn, pn, "micro") if mask_n.any() else 0.0
+    mi_re_n  = _rec(tn, pn, "micro")  if mask_n.any() else 0.0
+    mi_f1_m  = _f1(tm, pm, "micro")   if mask_m.any() else 0.0
+    mi_pr_m  = _prec(tm, pm, "micro") if mask_m.any() else 0.0
+    mi_re_m  = _rec(tm, pm, "micro")  if mask_m.any() else 0.0
+
+    # Per-head macro precision/recall
+    ma_pr_t  = _prec(tt, pt, "macro") if mask_t.any() else 0.0
+    ma_re_t  = _rec(tt, pt, "macro")  if mask_t.any() else 0.0
+    ma_pr_n  = _prec(tn, pn, "macro") if mask_n.any() else 0.0
+    ma_re_n  = _rec(tn, pn, "macro")  if mask_n.any() else 0.0
+    ma_pr_m  = _prec(tm, pm, "macro") if mask_m.any() else 0.0
+    ma_re_m  = _rec(tm, pm, "macro")  if mask_m.any() else 0.0
 
     # Exact match only on samples with ALL labels valid
     all_valid = mask_t & mask_n & mask_m
@@ -75,6 +108,13 @@ def compute_metrics(pred_t, pred_n, pred_m, true_t, true_n, true_m,
         "f1_m": float(f1_m),
         "f1_macro_avg": float((f1_t + f1_n + f1_m) / 3),
         "exact_match": float(exact),
+        # Micro-averaged (mean across heads)
+        "micro_f1":        (mi_f1_t + mi_f1_n + mi_f1_m) / 3,
+        "micro_precision": (mi_pr_t + mi_pr_n + mi_pr_m) / 3,
+        "micro_recall":    (mi_re_t + mi_re_n + mi_re_m) / 3,
+        # Macro-averaged precision/recall (mean across heads)
+        "macro_precision": (ma_pr_t + ma_pr_n + ma_pr_m) / 3,
+        "macro_recall":    (ma_re_t + ma_re_n + ma_re_m) / 3,
         "n_valid_t": int(mask_t.sum()),
         "n_valid_n": int(mask_n.sum()),
         "n_valid_m": int(mask_m.sum()),
@@ -197,7 +237,7 @@ def main():
     parser.add_argument("--output-dir", default="outputs")
     parser.add_argument("--encoder", default=DEFAULT_ENCODER)
     parser.add_argument("--max-length", type=int, default=DEFAULT_MAX_LENGTH)
-    parser.add_argument("--batch-size", type=int, default=16)
+    parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--eval-batch-size", type=int, default=32)
     parser.add_argument("--epochs", type=int, default=5)
     parser.add_argument("--lr", type=float, default=5e-5)
@@ -210,6 +250,12 @@ def main():
                              "then all heads for remaining epochs. 0 = disabled (default).")
     parser.add_argument("--resume", default=None, metavar="CHECKPOINT",
                         help="Path to a checkpoint (.pt) to resume training from.")
+    parser.add_argument("--wandb", action="store_true",
+                        help="Enable Weights & Biases logging.")
+    parser.add_argument("--wandb-project", default="tnm-staging",
+                        help="W&B project name (default: tnm-staging).")
+    parser.add_argument("--wandb-run-name", default=None,
+                        help="W&B run name (optional).")
     parser.add_argument("--regex-hints", action="store_true",
                         help="Augment the model with regex-extracted TNM hint embeddings.")
     args = parser.parse_args()
@@ -221,6 +267,15 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     logger.info("Using device: %s", device)
     os.makedirs(args.output_dir, exist_ok=True)
+
+    wandb_run = None
+    if args.wandb:
+        wandb_run = wandb.init(
+            project=args.wandb_project,
+            name=args.wandb_run_name,
+            config=vars(args),
+        )
+        logger.info("W&B run: %s", wandb_run.url)
 
     # Data
     train_df = pd.read_csv(os.path.join(args.data_dir, "train.csv"))
@@ -336,6 +391,23 @@ def main():
             metrics["f1_t"], metrics["f1_n"], metrics["f1_m"],
             metrics["exact_match"],
         )
+        if wandb_run is not None:
+            wandb_run.log({
+                "epoch": epoch + 1,
+                "train/loss": loss_avg,
+                "val/f1_t": metrics["f1_t"],
+                "val/f1_n": metrics["f1_n"],
+                "val/f1_m": metrics["f1_m"],
+                "val/f1_macro_avg": metrics["f1_macro_avg"],
+                "val/exact_match": metrics["exact_match"],
+                "val/auroc_m": metrics.get("auroc_m", 0.0),
+                "val/micro_f1": metrics["micro_f1"],
+                "val/micro_precision": metrics["micro_precision"],
+                "val/micro_recall": metrics["micro_recall"],
+                "val/macro_f1": metrics["f1_macro_avg"],
+                "val/macro_precision": metrics["macro_precision"],
+                "val/macro_recall": metrics["macro_recall"],
+            })
         if metrics["exact_match"] > best_exact:
             best_exact = metrics["exact_match"]
             torch.save(
@@ -351,6 +423,8 @@ def main():
     with open(os.path.join(args.output_dir, "train_config.json"), "w") as f:
         json.dump(vars(args), f, indent=2)
     logger.info("Best exact_match=%.4f saved to %s/best.pt", best_exact, args.output_dir)
+    if wandb_run is not None:
+        wandb_run.finish()
     return 0
 
 

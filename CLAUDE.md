@@ -25,6 +25,9 @@ uv run python src/train.py --data-dir data --output-dir outputs
 # Training (two-phase: 2 epochs T+N only, then all heads)
 uv run python src/train.py --data-dir data --output-dir outputs --two-phase 2
 
+# Training with W&B logging (add --wandb-project / --wandb-run-name to customise)
+uv run python src/train.py --data-dir data --output-dir outputs --wandb
+
 uv run python src/predict.py --checkpoint outputs/best.pt --input-csv data/val.csv --output-csv submission.csv
 uv run python src/eval_metrics.py submission.csv data/val.csv
 ```
@@ -34,7 +37,7 @@ uv run python src/eval_metrics.py submission.csv data/val.csv
 - `src/model.py` — TNMClassifier: shared BERT encoder + 3 linear heads
 - `src/dataset.py` — PyTorch Dataset with validity masks for partial labels
 - `src/data_prep.py` — Data joining, label mapping, stratified splits (supports `--partial-labels`)
-- `src/train.py` — Training loop with masked loss per head and optional `--two-phase` training
+- `src/train.py` — Training loop with masked loss per head, optional `--two-phase` training, and optional W&B logging (`--wandb`)
 - `src/predict.py` — Inference from checkpoint
 - `src/eval_metrics.py` — F1, AUROC, exact-match evaluation
 - `src/explain.py` — Attention-based evidence extraction
@@ -55,3 +58,5 @@ uv run python src/eval_metrics.py submission.csv data/val.csv
 - `data/` — Processed train/val splits (80/20, no test set)
 - `outputs/` — Model checkpoints and configs
 - `docs/data_analysis.md` — Dataset analysis: data funnel, token distribution, TNM combinations
+
+**remember to edit related docs if needed**
