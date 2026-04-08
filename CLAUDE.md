@@ -1,62 +1,89 @@
 # TNM Staging Classification
 
 ## Project Overview
-Multi-label classification of cancer TNM staging (T1-T4, N0-N3, M0-M1) from TCGA free-text pathology reports using a fine-tuned BioClinical-ModernBERT-base encoder (8192 token context) with three classification heads.
+Multi-label classification of cancer TNM staging (T1-T4, N0-N3, M0-M1) from TCGA free-text pathology reports. Supports both encoder (BioClinical-ModernBERT) and decoder-only (MedGemma 4B + LoRA) backbones with configurable classification heads (CE or CORAL ordinal).
 
 ## Tech Stack
 - **Python 3.12**, managed with **uv**
-- PyTorch, HuggingFace Transformers, scikit-learn
+- PyTorch, HuggingFace Transformers, PEFT (LoRA), scikit-learn
 - pytest for testing
+
+## Project Structure
+```
+src/
+  models/
+    classifier.py     # TNMClassifier: backbone + 3 heads (CE or CORAL)
+  data/
+    dataset.py        # TNMDataset with validity masks for partial labels
+    data_prep.py      # Data joining, label mapping, stratified splits
+  constants.py        # Label mappings, defaults (single source of truth)
+  train.py            # Training loop (--head-type ce|coral)
+  predict.py          # Inference from checkpoint
+  eval_metrics.py     # F1, precision, recall, exact-match evaluation
+  explain.py          # Attention-based evidence extraction
+  tnm_regex.py        # Rule-based TNM extraction from text
+  tnm_regex_analysis.py  # Regex coverage/accuracy analysis
+configs/
+  default.yaml        # Reference training config
+docs/
+  experiments.md      # Experiment log (approaches, configs, results)
+  data_analysis.md    # Dataset analysis
+tests/                # pytest test suite
+archive/              # Old model versions (baseline v1, CORAL v1)
+```
 
 ## Key Commands
 ```bash
 uv sync --extra dev          # Install all deps including dev
 uv run pytest                # Run tests
 
-# Data prep (default: inner join, all-three-labels required)
-uv run python src/data_prep.py --reports TCGA_Reports.csv --meta-dir TCGA_Metadata --out-dir data
+# Training — BioClinical-ModernBERT + CE heads (default)
+uv run python src/train.py --data-dir data --output-dir outputs --head-type ce
 
-# Data prep (partial labels: left join, missing labels stored as -1)
-uv run python src/data_prep.py --reports TCGA_Reports.csv --meta-dir TCGA_Metadata --out-dir data --partial-labels
+# Training — BioClinical-ModernBERT + CORAL ordinal heads
+uv run python src/train.py --data-dir data --output-dir outputs_coral --head-type coral
 
-# Training (standard)
-uv run python src/train.py --data-dir data --output-dir outputs
+# Training — MedGemma 4B + LoRA + CE heads
+uv run python src/train.py --data-dir data --output-dir outputs_medgemma \
+  --encoder google/medgemma-1.5-4b-it --head-type ce \
+  --lora-r 16 --lora-alpha 32 --head-lr 1e-3 --lr 2e-4 \
+  --batch-size 2 --grad-accum-steps 8
 
-# Training (two-phase: 2 epochs T+N only, then all heads)
-uv run python src/train.py --data-dir data --output-dir outputs --two-phase 2
-
-# Training with W&B logging (add --wandb-project / --wandb-run-name to customise)
+# Training with W&B logging
 uv run python src/train.py --data-dir data --output-dir outputs --wandb
 
+# Prediction
 uv run python src/predict.py --checkpoint outputs/best.pt --input-csv data/val.csv --output-csv submission.csv
-uv run python src/eval_metrics.py submission.csv data/val.csv
+
+# Evaluation
+uv run python src/eval_metrics.py submission.csv data/train.csv
 ```
 
 ## Architecture
-- `src/constants.py` — Shared label mappings and defaults (single source of truth)
-- `src/model.py` — TNMClassifier: shared BERT encoder + 3 linear heads
-- `src/dataset.py` — PyTorch Dataset with validity masks for partial labels
-- `src/data_prep.py` — Data joining, label mapping, stratified splits (supports `--partial-labels`)
-- `src/train.py` — Training loop with masked loss per head, optional `--two-phase` training, and optional W&B logging (`--wandb`)
-- `src/predict.py` — Inference from checkpoint
-- `src/eval_metrics.py` — F1, AUROC, exact-match evaluation
-- `src/explain.py` — Attention-based evidence extraction
-- `configs/default.yaml` — Reference training config
+- **TNMClassifier** (`src/models/classifier.py`): Unified model supporting:
+  - Encoder models (BioClinical-ModernBERT): CLS/mean pooling
+  - Decoder-only models (MedGemma): last-token pooling, auto-detected
+  - LoRA: optional, enabled with `--lora-r > 0`
+  - Head types: `ce` (3x nn.Linear + CrossEntropyLoss) or `coral` (ordinal T/N + binary M)
+
+## Model Defaults
+- **Encoder**: `thomas-sounack/BioClinical-ModernBERT-base` (encoder, 149M params, 8192 context)
+- **Max length**: 4096 (covers 99%+ of samples)
+- **Head type**: CE (cross-entropy)
+- **Optimizer**: AdamW, lr=5e-5, warmup + cosine decay
+
+## Data Format
+- **train.csv**: `patient_filename, text, t, n, m` — t is 1-indexed (1-4), n/m are 0-indexed, NaN for missing
+- **val.csv**: `patient_filename, text` — no labels in raw file; enriched from `TCGA_Metadata/` at load time
+- **TCGA_Metadata/**: `TCGA_T14_patients.csv`, `TCGA_N03_patients.csv`, `TCGA_M01_patients.csv` — ground-truth labels joined by `case_submitter_id`
+- To pre-enrich val.csv: `uv run python src/data/data_prep.py enrich-val --val-csv data/val.csv`
 
 ## Conventions
 - All source code lives in `src/`, tests in `tests/`
-- Label mappings are defined once in `src/constants.py` — do not duplicate
+- Label mappings defined once in `src/constants.py`
 - Use Python `logging` module, not `print()`, in all source files
-- Catch specific exceptions (ValueError, RuntimeError), not bare `Exception`
-- Class weights for M stage are enabled by default (disable with `--no-class-weights-m`)
-- Missing labels use sentinel value -1; the training loop masks these out of per-head loss
-- Two-phase training (`--two-phase N`): first N epochs train T+N heads only, remaining epochs train all three
+- Missing labels use sentinel value -1; training loop masks these out
+- Experiment approaches documented in `docs/experiments.md`
+- Old model versions archived in `archive/`
 
-## Data (not tracked in git)
-- `TCGA_Reports.csv` — Raw pathology reports (~9,500 rows)
-- `TCGA_Metadata/` — T/N/M label CSVs
-- `data/` — Processed train/val splits (80/20, no test set)
-- `outputs/` — Model checkpoints and configs
-- `docs/data_analysis.md` — Dataset analysis: data funnel, token distribution, TNM combinations
-
-**remember to edit related docs if needed**
+**git commit it and remember to edit related docs if needed**
