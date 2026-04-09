@@ -248,7 +248,9 @@ def load_data(data_dir, meta_dir="TCGA_Metadata"):
         df = df.merge(m_df, on="case_submitter_id", how="left")
         df.drop(columns=["case_submitter_id"], inplace=True)
 
-        # t from metadata is already 0-indexed, just fill missing with -1
+        # t from metadata is 0-indexed; convert to 1-indexed to match train.csv
+        # so _normalize() handles both uniformly
+        df["t"] = df["t"].where(df["t"].isna(), df["t"] + 1)
         for col in ("t", "n", "m"):
             df[col] = df[col].fillna(-1).astype(int)
 
@@ -564,14 +566,44 @@ def main():
             **{k: float(v) if isinstance(v, (int, float, np.floating)) else v for k, v in metrics.items()},
         })
 
+        # Evaluate on training set for overfitting analysis
+        train_metrics = evaluate(model, train_loader, device, args.head_type)
+        logger.info(
+            "Epoch %d  TRAIN  F1_T=%.4f  F1_N=%.4f  F1_M=%.4f  F1_avg=%.4f  exact=%.4f",
+            epoch + 1,
+            train_metrics["f1_t"], train_metrics["f1_n"], train_metrics["f1_m"],
+            train_metrics["f1_macro_avg"], train_metrics["exact_match"],
+        )
+        if wandb_run is not None:
+            wandb_run.log({
+                **{f"train/{k}": v for k, v in train_metrics.items()},
+            }, commit=False)
+
+        train_history[-1].update({
+            f"train_{k}": float(v) if isinstance(v, (int, float, np.floating)) else v
+            for k, v in train_metrics.items()
+        })
+
+        # Save per-epoch checkpoint with separate head weights
+        epoch_dir = os.path.join(args.output_dir, f"epoch_{epoch + 1}")
+        os.makedirs(epoch_dir, exist_ok=True)
+        if model.use_lora:
+            full_state = model.get_trainable_state_dict()
+        else:
+            full_state = model.state_dict()
+        save_dict = {"epoch": epoch, "metrics": metrics, "train_metrics": train_metrics,
+                     "model_state_dict": full_state}
+        torch.save(save_dict, os.path.join(epoch_dir, "checkpoint.pt"))
+        # Save individual head weights
+        for head_name in ("head_t", "head_n", "head_m"):
+            head_state = {k: v for k, v in full_state.items() if k.startswith(head_name)}
+            if head_state:
+                torch.save(head_state, os.path.join(epoch_dir, f"{head_name}.pt"))
+        logger.info("Saved epoch %d checkpoint to %s", epoch + 1, epoch_dir)
+
         if metrics["f1_macro_avg"] > best_f1:
             best_f1 = metrics["f1_macro_avg"]
             best_metrics = metrics
-            save_dict = {"epoch": epoch, "metrics": metrics}
-            if model.use_lora:
-                save_dict["model_state_dict"] = model.get_trainable_state_dict()
-            else:
-                save_dict["model_state_dict"] = model.state_dict()
             torch.save(save_dict, os.path.join(args.output_dir, "best.pt"))
     train_pbar.close()
 
