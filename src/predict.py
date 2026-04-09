@@ -46,14 +46,20 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     logger.info("Using device: %s", device)
 
-    # Load train config
+    # Load train config (check checkpoint dir, then parent dir for epoch subdirs)
     ckpt_dir = os.path.dirname(args.checkpoint)
-    config_path = args.config or os.path.join(ckpt_dir, "train_config.json")
+    if args.config:
+        config_path = args.config
+    else:
+        config_path = os.path.join(ckpt_dir, "train_config.json")
+        if not os.path.exists(config_path):
+            config_path = os.path.join(os.path.dirname(ckpt_dir), "train_config.json")
     if os.path.exists(config_path):
+        logger.info("Loaded config from %s", config_path)
         with open(config_path) as f:
             train_config = json.load(f)
     else:
-        logger.warning("Config not found at %s, using defaults.", config_path)
+        logger.warning("Config not found, using defaults.")
         train_config = {}
 
     encoder_name = train_config.get("encoder", DEFAULT_ENCODER)
