@@ -83,11 +83,14 @@ def compute_metrics(pred_t, pred_n, pred_m, true_t, true_n, true_m,
     metrics["Macro-Precision"] = (ma_pr_t + ma_pr_n + ma_pr_m) / 3
     metrics["Macro-Recall"] = (ma_re_t + ma_re_n + ma_re_m) / 3
 
-    metrics["exact_match"] = float(np.mean(
-        (np.array(pred_t) == np.array(true_t))
-        & (np.array(pred_n) == np.array(true_n))
-        & (np.array(pred_m) == np.array(true_m))
-    ))
+    if len(pred_t) == len(pred_n) == len(pred_m):
+        metrics["exact_match"] = float(np.mean(
+            (np.array(pred_t) == np.array(true_t))
+            & (np.array(pred_n) == np.array(true_n))
+            & (np.array(pred_m) == np.array(true_m))
+        ))
+    else:
+        metrics["exact_match"] = float("nan")
 
     # AUROC (optional)
     if probs_m is not None and len(np.unique(true_m)) > 1:
@@ -145,12 +148,49 @@ def main():
 
     pred_mask = pred_df[id_col].isin(merged_ids[id_col])
     gt_mask = gt_df[id_col].isin(merged_ids[id_col])
+
+    pt, pn, pm = pred_t[pred_mask.values], pred_n[pred_mask.values], pred_m[pred_mask.values]
+    tt, tn, tm = true_t[gt_mask.values], true_n[gt_mask.values], true_m[gt_mask.values]
+
+    # Mask out samples with missing ground truth labels (NaN or sentinel -1/-2)
+    valid_t = np.isfinite(tt) & (tt >= 0)
+    valid_n = np.isfinite(tn) & (tn >= 0)
+    valid_m = np.isfinite(tm) & (tm >= 0)
+    n_skipped_t = int((~valid_t).sum())
+    n_skipped_n = int((~valid_n).sum())
+    n_skipped_m = int((~valid_m).sum())
+    if n_skipped_t or n_skipped_n or n_skipped_m:
+        logger.info(
+            "Skipping samples with missing ground truth — T: %d, N: %d, M: %d",
+            n_skipped_t, n_skipped_n, n_skipped_m,
+        )
+
     metrics = compute_metrics(
-        pred_t[pred_mask.values], pred_n[pred_mask.values], pred_m[pred_mask.values],
-        true_t[gt_mask.values], true_n[gt_mask.values], true_m[gt_mask.values],
+        pt[valid_t], pn[valid_n], pm[valid_m],
+        tt[valid_t], tn[valid_n], tm[valid_m],
     )
+
+    # Recompute exact match on samples where ALL three labels are valid
+    valid_all = valid_t & valid_n & valid_m
+    if valid_all.any():
+        metrics["exact_match"] = float(np.mean(
+            (pt[valid_all] == tt[valid_all])
+            & (pn[valid_all] == tn[valid_all])
+            & (pm[valid_all] == tm[valid_all])
+        ))
+    else:
+        metrics["exact_match"] = 0.0
+
+    metrics["n_eval_t"] = int(valid_t.sum())
+    metrics["n_eval_n"] = int(valid_n.sum())
+    metrics["n_eval_m"] = int(valid_m.sum())
+    metrics["n_eval_exact"] = int(valid_all.sum())
+
     for k, v in metrics.items():
-        print(f"{k}: {v:.4f}")
+        if isinstance(v, float):
+            print(f"{k}: {v:.4f}")
+        else:
+            print(f"{k}: {v}")
     if args.output_metrics:
         with open(args.output_metrics, "w") as f:
             json.dump(metrics, f, indent=2)
