@@ -1,5 +1,7 @@
 """
-Load best checkpoint and run on a CSV with 'text' column; write submission CSV with T, N, M labels.
+Load best checkpoint and predict on a CSV with 'text' column.
+Writes submission CSV with patient_filename, t, n, m.
+Supports both CE and CORAL head types (auto-detected from train config).
 """
 import argparse
 import json
@@ -16,12 +18,11 @@ from transformers import AutoTokenizer
 
 from constants import (
     DEFAULT_ENCODER, DEFAULT_MAX_LENGTH,
-    T_IDX_TO_LABEL, N_IDX_TO_LABEL, M_IDX_TO_LABEL,
     T_NUM_LABELS, N_NUM_LABELS, M_NUM_LABELS,
 )
-from dataset import TNMDataset
-from model import TNMClassifier
-from tnm_regex import encode_hints
+from data.dataset import TNMDataset
+from models.classifier import TNMClassifier
+from train import coral_predict, binary_predict
 
 logger = logging.getLogger(__name__)
 
@@ -45,57 +46,57 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     logger.info("Using device: %s", device)
 
+    # Load train config
     ckpt_dir = os.path.dirname(args.checkpoint)
     config_path = args.config or os.path.join(ckpt_dir, "train_config.json")
     if os.path.exists(config_path):
         with open(config_path) as f:
             train_config = json.load(f)
-        encoder_name = train_config.get("encoder", DEFAULT_ENCODER)
-        max_length = train_config.get("max_length", DEFAULT_MAX_LENGTH)
-        use_regex_hints = train_config.get("regex_hints", False)
     else:
         logger.warning("Config not found at %s, using defaults.", config_path)
-        encoder_name = DEFAULT_ENCODER
-        max_length = args.max_length
-        use_regex_hints = False
+        train_config = {}
 
+    encoder_name = train_config.get("encoder", DEFAULT_ENCODER)
+    max_length = train_config.get("max_length", args.max_length)
+    head_type = train_config.get("head_type", "ce")
+    lora_r = train_config.get("lora_r", 0)
+    lora_alpha = train_config.get("lora_alpha", 32)
+    lora_dropout = train_config.get("lora_dropout", 0.1)
+    lora_targets = train_config.get("lora_targets", None)
+
+    # Load data
     df = pd.read_csv(args.input_csv)
     if "text" not in df.columns:
-        sys.exit(f"Input CSV must have 'text' column. Found columns: {list(df.columns)}")
+        sys.exit(f"Input CSV must have 'text' column. Found: {list(df.columns)}")
     texts = df["text"].astype(str).tolist()
-    if args.id_col not in df.columns:
-        logger.warning("ID column '%s' not found, using first column '%s'.", args.id_col, df.columns[0])
     id_col = args.id_col if args.id_col in df.columns else df.columns[0]
     ids = df[id_col].astype(str).tolist()
 
     tokenizer = AutoTokenizer.from_pretrained(encoder_name)
-    enc = tokenizer(
-        texts,
-        padding=True,
-        truncation=True,
-        max_length=max_length,
-        return_tensors="np",
-    )
-    n = len(texts)
-    if use_regex_hints:
-        logger.info("Extracting regex hints...")
-        ht, hn, hm = encode_hints(texts)
-    else:
-        ht = hn = hm = None
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
 
-    ds = TNMDataset(enc, np.zeros(n, dtype=int), np.zeros(n, dtype=int), np.zeros(n, dtype=int),
-                    hint_t=ht, hint_n=hn, hint_m=hm)
+    enc = tokenizer(texts, padding=True, truncation=True, max_length=max_length, return_tensors="np")
+    n = len(texts)
+    ds = TNMDataset(enc, np.zeros(n, dtype=int), np.zeros(n, dtype=int), np.zeros(n, dtype=int))
     loader = DataLoader(ds, batch_size=args.batch_size, shuffle=False, num_workers=0)
 
+    # Build model
+    torch_dtype = torch.bfloat16 if lora_r > 0 else torch.float32
     model = TNMClassifier(
         encoder_name=encoder_name,
         t_num_labels=T_NUM_LABELS,
         n_num_labels=N_NUM_LABELS,
         m_num_labels=M_NUM_LABELS,
-        use_regex_hints=use_regex_hints,
+        head_type=head_type,
+        lora_r=lora_r,
+        lora_alpha=lora_alpha,
+        lora_dropout=lora_dropout,
+        lora_targets=lora_targets,
+        torch_dtype=torch_dtype,
     )
     ckpt = torch.load(args.checkpoint, map_location=device)
-    model.load_state_dict(ckpt["model_state_dict"])
+    model.load_state_dict(ckpt["model_state_dict"], strict=False)
     model.to(device)
     model.eval()
 
@@ -107,29 +108,28 @@ def main():
             token_type_ids = batch.get("token_type_ids")
             if token_type_ids is not None:
                 token_type_ids = token_type_ids.to(device)
-            hint_t = batch["hint_t"].to(device) if "hint_t" in batch else None
-            hint_n = batch["hint_n"].to(device) if "hint_n" in batch else None
-            hint_m = batch["hint_m"].to(device) if "hint_m" in batch else None
+
             logits_t, logits_n, logits_m = model(
-                input_ids=input_ids,
-                attention_mask=attention_mask,
+                input_ids=input_ids, attention_mask=attention_mask,
                 token_type_ids=token_type_ids,
-                hint_t=hint_t,
-                hint_n=hint_n,
-                hint_m=hint_m,
             )
-            preds_t.append(logits_t.argmax(1).cpu().numpy())
-            preds_n.append(logits_n.argmax(1).cpu().numpy())
-            preds_m.append(logits_m.argmax(1).cpu().numpy())
+
+            if head_type == "coral":
+                preds_t.append(coral_predict(logits_t).cpu().numpy())
+                preds_n.append(coral_predict(logits_n).cpu().numpy())
+                preds_m.append(binary_predict(logits_m).cpu().numpy())
+            else:
+                preds_t.append(logits_t.argmax(1).cpu().numpy())
+                preds_n.append(logits_n.argmax(1).cpu().numpy())
+                preds_m.append(logits_m.argmax(1).cpu().numpy())
+
     preds_t = np.concatenate(preds_t)
     preds_n = np.concatenate(preds_n)
     preds_m = np.concatenate(preds_m)
 
+    # Output format: t is 1-indexed (1-4), n/m are 0-indexed
     out = pd.DataFrame({
         id_col: ids,
-        # "T_label": [T_IDX_TO_LABEL[int(x)] for x in preds_t],
-        # "N_label": [N_IDX_TO_LABEL[int(x)] for x in preds_n],
-        # "M_label": [M_IDX_TO_LABEL[int(x)] for x in preds_m],
         "t": preds_t + 1,
         "n": preds_n,
         "m": preds_m,

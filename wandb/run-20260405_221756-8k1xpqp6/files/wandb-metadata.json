@@ -1,0 +1,43 @@
+{
+  "os": "Linux-6.14.0-1015-nvidia-aarch64-with-glibc2.39",
+  "python": "CPython 3.12.3",
+  "startedAt": "2026-04-05T14:17:56.514664Z",
+  "args": [
+    "--epochs",
+    "10",
+    "--wandb"
+  ],
+  "program": "/home/hsiaoeric/project/task6/src/train.py",
+  "codePath": "src/train.py",
+  "codePathLocal": "src/train.py",
+  "git": {
+    "commit": "4e9cca176e035a1538e8ee9ede6235ee9420edf5"
+  },
+  "email": "hsiaoeric.dev@gmail.com",
+  "root": "/home/hsiaoeric/project/task6",
+  "host": "gx10-59cb",
+  "executable": "/home/hsiaoeric/project/task6/.venv/bin/python3",
+  "cpu_count": 20,
+  "cpu_count_logical": 20,
+  "gpu": "NVIDIA GB10",
+  "gpu_count": 1,
+  "disk": {
+    "/": {
+      "total": "982819848192",
+      "used": "676133052416"
+    }
+  },
+  "memory": {
+    "total": "128457207808"
+  },
+  "gpu_nvidia": [
+    {
+      "name": "NVIDIA GB10",
+      "cudaCores": 6144,
+      "architecture": "Blackwell",
+      "uuid": "GPU-c49e0e5f-c950-d6f3-6259-66cd2a86af7b"
+    }
+  ],
+  "cudaVersion": "13.0",
+  "writerId": "bmhvd0gyi80vvh2ahcrhu4kvdmqox4ma"
+}

@@ -86,4 +86,4 @@ uv run python src/eval_metrics.py submission.csv data/train.csv
 - Experiment approaches documented in `docs/experiments.md`
 - Old model versions archived in `archive/`
 
-**git commit it and remember to edit related docs if needed**
+**git commit it and remember to edit related docs if needed; always run python with uv**

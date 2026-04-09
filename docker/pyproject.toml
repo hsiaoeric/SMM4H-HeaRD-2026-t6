@@ -1,0 +1,28 @@
+[project]
+name = "tnm-staging"
+version = "0.1.0"
+description = "TNM staging classification from TCGA pathology reports"
+requires-python = ">=3.12"
+# torch, torchvision, torchaudio, vllm are pre-installed in the NGC container
+dependencies = [
+    "pandas>=2.0.0",
+    "numpy>=1.24.0",
+    "transformers>=4.30.0",
+    "peft>=0.13.0",
+    "scikit-learn>=1.2.0",
+    "tqdm>=4.60.0",
+    "wandb>=0.17.0",
+    "gdown>=5.2.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

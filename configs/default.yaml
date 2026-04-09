@@ -1,30 +1,45 @@
-# TNM staging training config
+# TNM staging training config — BioClinical-ModernBERT + CE heads
 seed: 0
 data:
   data_dir: data
-  max_length: 512
-  batch_size: 16
+  max_length: 4096     # BioClinical-ModernBERT supports 8192; 4096 covers 99%+ of samples
+  val_size: 0.15
+  batch_size: 8
   eval_batch_size: 32
+  grad_accum_steps: 1
 
 model:
-  encoder_name: "emilyalsentzer/Bio_ClinicalBERT"
-  t_num_labels: 4   # T1-T4
-  n_num_labels: 4   # N0-N3
-  m_num_labels: 2   # M0-M1
+  encoder_name: "thomas-sounack/BioClinical-ModernBERT-base"
+  head_type: ce        # "ce" or "coral"
+  t_num_labels: 4      # T1-T4
+  n_num_labels: 4      # N0-N3
+  m_num_labels: 2      # M0-M1
 
 training:
   num_epochs: 5
   learning_rate: 5.0e-5
   weight_decay: 0.01
   warmup_ratio: 0.1
-  eval_steps: 100
-  save_steps: 200
-  save_total_limit: 2
-  metric_for_best: exact_match  # or eval_f1_macro
+  metric_for_best: f1_macro_avg
   greater_is_better: true
-  # Class weights for M (imbalanced): computed in code from train set
-  use_class_weights_m: true
 
 output:
   output_dir: outputs
-  run_name: tnm_biobert
+  run_name: tnm_modernbert_ce
+
+# --- Alternative: MedGemma 4B + LoRA + CORAL ---
+# model:
+#   encoder_name: "google/medgemma-1.5-4b-it"
+#   head_type: coral
+# lora:
+#   r: 16
+#   alpha: 32
+#   dropout: 0.1
+#   target_modules: ["q_proj", "v_proj"]
+# data:
+#   max_length: 2048
+#   batch_size: 2
+#   grad_accum_steps: 8
+# training:
+#   learning_rate: 2.0e-4
+#   head_learning_rate: 1.0e-3

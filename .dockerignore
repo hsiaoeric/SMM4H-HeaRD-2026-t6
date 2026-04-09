@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+.git/
+.venv/
+outputs*/
+data/
+*.pt
+*.bin
+wandb/
+unsloth_compiled_cache/

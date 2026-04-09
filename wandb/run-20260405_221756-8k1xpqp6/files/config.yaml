@@ -1,0 +1,112 @@
+_wandb:
+    value:
+        cli_version: 0.25.1
+        e:
+            bmhvd0gyi80vvh2ahcrhu4kvdmqox4ma:
+                args:
+                    - --epochs
+                    - "10"
+                    - --wandb
+                codePath: src/train.py
+                codePathLocal: src/train.py
+                cpu_count: 20
+                cpu_count_logical: 20
+                cudaVersion: "13.0"
+                disk:
+                    /:
+                        total: "982819848192"
+                        used: "676133052416"
+                email: hsiaoeric.dev@gmail.com
+                executable: /home/hsiaoeric/project/task6/.venv/bin/python3
+                git:
+                    commit: 4e9cca176e035a1538e8ee9ede6235ee9420edf5
+                gpu: NVIDIA GB10
+                gpu_count: 1
+                gpu_nvidia:
+                    - architecture: Blackwell
+                      cudaCores: 6144
+                      name: NVIDIA GB10
+                      uuid: GPU-c49e0e5f-c950-d6f3-6259-66cd2a86af7b
+                host: gx10-59cb
+                memory:
+                    total: "128457207808"
+                os: Linux-6.14.0-1015-nvidia-aarch64-with-glibc2.39
+                program: /home/hsiaoeric/project/task6/src/train.py
+                python: CPython 3.12.3
+                root: /home/hsiaoeric/project/task6
+                startedAt: "2026-04-05T14:17:56.514664Z"
+                writerId: bmhvd0gyi80vvh2ahcrhu4kvdmqox4ma
+        m: []
+        python_version: 3.12.3
+        t:
+            "1":
+                - 1
+                - 5
+                - 11
+                - 49
+                - 53
+                - 71
+            "2":
+                - 1
+                - 5
+                - 11
+                - 41
+                - 49
+                - 53
+                - 71
+            "3":
+                - 2
+                - 16
+            "4": 3.12.3
+            "5": 0.25.1
+            "6": 4.57.6
+            "12": 0.25.1
+            "13": linux-aarch64
+batch_size:
+    value: 8
+data_dir:
+    value: data
+encoder:
+    value: thomas-sounack/BioClinical-ModernBERT-base
+epochs:
+    value: 10
+eval_batch_size:
+    value: 32
+grad_accum_steps:
+    value: 1
+head_lr:
+    value: null
+head_type:
+    value: ce
+lora_alpha:
+    value: 32
+lora_dropout:
+    value: 0.1
+lora_r:
+    value: 0
+lora_targets:
+    value: null
+lr:
+    value: 5e-05
+max_length:
+    value: 4096
+no_class_weights_m:
+    value: false
+output_dir:
+    value: outputs/20260405_2217
+resume:
+    value: null
+seed:
+    value: 0
+val_size:
+    value: 0.15
+wandb:
+    value: true
+wandb_project:
+    value: tnm-staging
+wandb_run_name:
+    value: null
+warmup_ratio:
+    value: 0.1
+weight_decay:
+    value: 0.01

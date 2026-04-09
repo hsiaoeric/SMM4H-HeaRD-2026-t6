@@ -18,4 +18,10 @@ M_NUM_LABELS = 2
 
 # Default model
 DEFAULT_ENCODER = "thomas-sounack/BioClinical-ModernBERT-base"
-DEFAULT_MAX_LENGTH = 8192
+DEFAULT_MAX_LENGTH = 4096
+
+# LoRA defaults
+DEFAULT_LORA_R = 16
+DEFAULT_LORA_ALPHA = 32
+DEFAULT_LORA_DROPOUT = 0.1
+DEFAULT_LORA_TARGETS = ["q_proj", "v_proj"]

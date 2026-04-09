@@ -5,7 +5,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 import pytest
-from data_prep import map_t_to_t14, map_n_to_n03, map_m_to_m01, normalize_text
+from data.data_prep import map_t_to_t14, map_n_to_n03, map_m_to_m01, normalize_text
 from constants import (
     T_IDX_TO_LABEL, N_IDX_TO_LABEL, M_IDX_TO_LABEL,
     T_LABEL_TO_IDX, N_LABEL_TO_IDX, M_LABEL_TO_IDX,

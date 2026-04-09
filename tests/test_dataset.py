@@ -6,7 +6,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 import numpy as np
 import torch
-from dataset import TNMDataset
+from data.dataset import TNMDataset
 
 
 class TestTNMDataset:
@@ -47,13 +47,38 @@ class TestTNMDataset:
         assert item["labels_n"].item() == 1
         assert item["labels_m"].item() == 1
 
-    def test_token_type_ids_optional(self):
+    def test_mask_keys_present(self):
+        ds = self._make_dataset()
+        item = ds[0]
+        assert "mask_t" in item
+        assert "mask_n" in item
+        assert "mask_m" in item
+        assert item["mask_t"].dtype == torch.bool
+
+    def test_valid_labels_have_true_mask(self):
+        ds = self._make_dataset()
+        item = ds[0]
+        assert item["mask_t"].item() is True
+        assert item["mask_n"].item() is True
+        assert item["mask_m"].item() is True
+
+    def test_missing_labels_masked_out(self):
         n, seq_len = 3, 8
         encodings = {
             "input_ids": np.random.randint(0, 1000, (n, seq_len)),
             "attention_mask": np.ones((n, seq_len), dtype=int),
-            "token_type_ids": np.zeros((n, seq_len), dtype=int),
         }
-        ds = TNMDataset(encodings, np.zeros(n, dtype=int), np.zeros(n, dtype=int), np.zeros(n, dtype=int))
-        item = ds[0]
-        assert "token_type_ids" in item
+        labels_t = np.array([0, -1, 2])
+        labels_n = np.array([-1, 1, 2])
+        labels_m = np.array([0, -1, -1])
+        ds = TNMDataset(encodings, labels_t, labels_n, labels_m)
+
+        item0 = ds[0]
+        assert item0["mask_t"].item() is True
+        assert item0["mask_n"].item() is False
+        assert item0["labels_n"].item() == 0  # clamped from -1
+
+        item1 = ds[1]
+        assert item1["mask_t"].item() is False
+        assert item1["mask_n"].item() is True
+        assert item1["mask_m"].item() is False
